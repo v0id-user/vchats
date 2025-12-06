@@ -32,6 +32,19 @@ import {
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "reconnecting" | "error";
 
+/** Event name to response type mapping for type-safe listeners */
+export type ChatEventMap = {
+  "chat.message": ChatMessageResponse;
+  "typing.start": TypingStartResponse;
+  "typing.stop": TypingStopResponse;
+  "user.joined": UserJoinedResponse;
+  "user.left": UserLeftResponse;
+  "conversation.joined": ConversationJoinedResponse;
+  "error": ErrorResponse;
+};
+
+export type ChatEventName = keyof ChatEventMap;
+
 export interface ChatClientOptions {
   reconnection?: {
     enabled?: boolean;
@@ -73,63 +86,27 @@ export class ChatClient {
   }
 
   private setupEventParsing(): void {
-    // Parse and validate incoming chat messages
-    this.client.on("chat.message", (data: unknown) => {
-      const result = ChatMessageSchema.safeParse(data);
-      if (result.success) {
-        this.emit("chat.message", result.data);
-      } else {
-        console.warn("Invalid chat.message payload:", result.error.issues);
-      }
-    });
+    // Event to schema mapping for Zod validation
+    const eventSchemas: Array<{ event: string; schema: { safeParse: (data: unknown) => { success: boolean; data?: unknown; error?: { issues: unknown } } }; warnOnError?: boolean }> = [
+      { event: "chat.message", schema: ChatMessageSchema, warnOnError: true },
+      { event: "typing.start", schema: TypingStartResponseSchema },
+      { event: "typing.stop", schema: TypingStopResponseSchema },
+      { event: "user.joined", schema: UserJoinedSchema },
+      { event: "user.left", schema: UserLeftSchema },
+      { event: "conversation.joined", schema: ConversationJoinedSchema },
+      { event: "error", schema: ErrorSchema },
+    ];
 
-    // Parse typing.start events
-    this.client.on("typing.start", (data: unknown) => {
-      const result = TypingStartResponseSchema.safeParse(data);
-      if (result.success) {
-        this.emit("typing.start", result.data);
-      }
-    });
-
-    // Parse typing.stop events
-    this.client.on("typing.stop", (data: unknown) => {
-      const result = TypingStopResponseSchema.safeParse(data);
-      if (result.success) {
-        this.emit("typing.stop", result.data);
-      }
-    });
-
-    // Parse user.joined events
-    this.client.on("user.joined", (data: unknown) => {
-      const result = UserJoinedSchema.safeParse(data);
-      if (result.success) {
-        this.emit("user.joined", result.data);
-      }
-    });
-
-    // Parse user.left events
-    this.client.on("user.left", (data: unknown) => {
-      const result = UserLeftSchema.safeParse(data);
-      if (result.success) {
-        this.emit("user.left", result.data);
-      }
-    });
-
-    // Parse conversation.joined events
-    this.client.on("conversation.joined", (data: unknown) => {
-      const result = ConversationJoinedSchema.safeParse(data);
-      if (result.success) {
-        this.emit("conversation.joined", result.data);
-      }
-    });
-
-    // Parse error events
-    this.client.on("error", (data: unknown) => {
-      const result = ErrorSchema.safeParse(data);
-      if (result.success) {
-        this.emit("error", result.data);
-      }
-    });
+    for (const { event, schema, warnOnError } of eventSchemas) {
+      this.client.on(event, (data: unknown) => {
+        const result = schema.safeParse(data);
+        if (result.success) {
+          this.emit(event, result.data);
+        } else if (warnOnError) {
+          console.warn(`Invalid ${event} payload:`, result.error?.issues);
+        }
+      });
+    }
   }
 
   // Internal emit to handlers
@@ -221,44 +198,19 @@ export class ChatClient {
   }
 
   // ============================================
-  // Type-safe event listeners
+  // Type-safe event listener
   // ============================================
 
-  onMessage(callback: (data: ChatMessageResponse) => void): () => void {
-    return this.addHandler("chat.message", callback);
-  }
-
-  onTypingStart(callback: (data: TypingStartResponse) => void): () => void {
-    return this.addHandler("typing.start", callback);
-  }
-
-  onTypingStop(callback: (data: TypingStopResponse) => void): () => void {
-    return this.addHandler("typing.stop", callback);
-  }
-
-  onUserJoined(callback: (data: UserJoinedResponse) => void): () => void {
-    return this.addHandler("user.joined", callback);
-  }
-
-  onUserLeft(callback: (data: UserLeftResponse) => void): () => void {
-    return this.addHandler("user.left", callback);
-  }
-
-  onConversationJoined(callback: (data: ConversationJoinedResponse) => void): () => void {
-    return this.addHandler("conversation.joined", callback);
-  }
-
-  onChatError(callback: (data: ErrorResponse) => void): () => void {
-    return this.addHandler("error", callback);
-  }
-
-  private addHandler(event: string, callback: (data: any) => void): () => void {
+  /**
+   * Subscribe to a chat event with type-safe callback.
+   * Returns an unsubscribe function.
+   */
+  on<E extends ChatEventName>(event: E, callback: (data: ChatEventMap[E]) => void): () => void {
     if (!this.handlers.has(event)) {
       this.handlers.set(event, new Set());
     }
     this.handlers.get(event)!.add(callback);
 
-    // Return unsubscribe function
     return () => {
       this.handlers.get(event)?.delete(callback);
     };

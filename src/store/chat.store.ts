@@ -105,7 +105,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
 
     // Type-safe event handlers with Zod-validated data
-    client.onMessage((data) => {
+    client.on("chat.message", (data) => {
       const { activeConversation, conversations } = get();
 
       const message: Message = {
@@ -140,7 +140,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
 
     // Typing indicators with type-safe data
-    client.onTypingStart((data) => {
+    client.on("typing.start", (data) => {
       const { typingUsers, activeConversation } = get();
       if (data.conversationId !== activeConversation?.id) return;
       if (data.userId === user.id) return;
@@ -150,18 +150,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     });
 
-    client.onTypingStop((data) => {
+    client.on("typing.stop", (data) => {
       set({
         typingUsers: get().typingUsers.filter((u) => u.id !== data.userId),
       });
     });
 
     // User presence
-    client.onUserJoined((data) => {
+    client.on("user.joined", (data) => {
       console.log("User joined:", data.username, data.userId);
     });
 
-    client.onUserLeft((data) => {
+    client.on("user.left", (data) => {
       // Remove from typing
       set({
         typingUsers: get().typingUsers.filter((u) => u.id !== data.userId),
@@ -169,7 +169,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
 
     // Error handling
-    client.onChatError((data) => {
+    client.on("error", (data) => {
       console.error("Chat error:", data.message, data.code);
     });
 
