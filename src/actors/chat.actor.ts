@@ -94,7 +94,7 @@ const chat = createTypedRoom(chatContract, {
 });
 
 // Handle sending messages - typed data comes directly from contract
-chat.handle("message.send", async (ctx, data) => {
+chat.on("message.send", async (ctx, data) => {
   const { conversationId, text } = data;
   const { userId, username } = ctx.meta;
 
@@ -143,7 +143,7 @@ chat.handle("message.send", async (ctx, data) => {
 });
 
 // Handle typing indicators - start
-chat.handle("typing.start", async (ctx, data) => {
+chat.on("typing.start", async (ctx, data) => {
   const { conversationId } = data;
   const { userId, username } = ctx.meta;
 
@@ -164,7 +164,7 @@ chat.handle("typing.start", async (ctx, data) => {
 });
 
 // Handle typing indicators - stop
-chat.handle("typing.stop", async (ctx, data) => {
+chat.on("typing.stop", async (ctx, data) => {
   const { conversationId } = data;
   const { userId, username } = ctx.meta;
 
@@ -180,7 +180,7 @@ chat.handle("typing.stop", async (ctx, data) => {
 });
 
 // Handle joining a conversation channel (when starting a new conversation)
-chat.handle("conversation.join", async (ctx, data) => {
+chat.on("conversation.join", async (ctx, data) => {
   const { conversationId } = data;
   const { userId } = ctx.meta;
 
