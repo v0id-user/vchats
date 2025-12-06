@@ -1,290 +1,242 @@
-Welcome to your new TanStack app! 
+# vchats - Verani Showcase
 
-# Getting Started
+A real-time chat application showcasing [Verani](https://github.com/v0id-user/verani/) - a simple, focused realtime SDK for Cloudflare Actors with Socket.io-like semantics.
 
-To run this application:
+## About Verani
+
+[Verani](https://github.com/v0id-user/verani/) brings the familiar developer experience of Socket.io to Cloudflare's Durable Objects (Actors), with proper hibernation support and minimal overhead.
+
+**Key Features:**
+- **Familiar API**: Socket.io-like semantics you already know
+- **Hibernation Support**: Properly handles Cloudflare Actor hibernation out of the box
+- **Type Safe**: Built with TypeScript, full type safety throughout
+- **Simple Mental Model**: Rooms, channels, and broadcast semantics
+
+## This Showcase
+
+This chat application demonstrates Verani's capabilities in a production-like environment:
+
+### Features Demonstrated
+
+- **Real-time Messaging**: WebSocket-based chat with instant message delivery
+- **Private 1-to-1 Chats**: Direct conversations between friends
+- **Group Chats**: Multi-user group conversations
+- **Friend System**: Friend requests with accept/reject workflow
+- **Authentication**: JWT-based auth with secure password hashing
+- **Queue-based Persistence**: Async message saving via Cloudflare Queues
+- **Type-safe WebSocket**: Zod-validated request/response schemas
+- **Connection Lifecycle**: Proper WebSocket connection management across route changes
+
+### Tech Stack
+
+- **Backend**: Cloudflare Workers + Durable Objects (Verani Actors)
+- **Database**: Cloudflare D1 (SQLite)
+- **Queue**: Cloudflare Queues for async writes
+- **ORM**: Drizzle ORM with type-safe queries
+- **Frontend**: React 19 + TanStack Router
+- **State Management**: Zustand
+- **Styling**: Tailwind CSS
+- **Validation**: Zod schemas for type-safe parsing
+- **Server Functions**: TanStack `createServerFn` for type-safe API calls
+
+## Getting Started
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) (or Node.js)
+- Cloudflare account (for D1 database and Queues)
+
+### Installation
 
 ```bash
 bun install
-bun --bun run start
 ```
 
-# Building For Production
+### Database Setup
 
-To build this application for production:
+1. Create a D1 database:
+```bash
+bunx wrangler d1 create vchats_db
+```
+
+2. Update `wrangler.jsonc` with your database binding name
+
+3. Run migrations:
+```bash
+bunx drizzle-kit push
+```
+
+### Queue Setup
+
+1. Create a Queue:
+```bash
+bunx wrangler queues create vchats_queue
+```
+
+2. Update `wrangler.jsonc` with your queue binding
+
+### Environment Variables
+
+Create a `.env` file:
+```env
+# JWT Secret (generate a secure random string)
+JWT_SECRET=your-secret-key-here
+```
+
+### Running Locally
 
 ```bash
-bun --bun run build
+bun dev
 ```
 
-## Testing
+The app will be available at `http://localhost:3000`
 
-This project uses [Vitest](https://vitest.dev/) for testing. You can run the tests with:
+## Architecture
 
-```bash
-bun --bun run test
-```
+### Server-Side (Cloudflare Worker)
 
-## Styling
+**Actor (`src/actors/chat.actor.ts`)**
+- WebSocket connection handling via Verani
+- Real-time message broadcasting
+- Typing indicators
+- Connection lifecycle management
 
-This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
+**Service Layer (`src/service/`)**
+- `auth.ts` - User registration and authentication
+- `conversations.ts` - Conversation management
+- `friends.ts` - Friend request system
+- `messages.ts` - Message persistence
+- `queue.ts` - Queue message handling
 
+**Server Functions (`src/server/`)**
+- Type-safe API endpoints using `createServerFn`
+- Zod validation for all inputs
+- JWT authentication middleware
 
+### Client-Side
 
+**State Management (`src/store/`)**
+- `auth.store.ts` - Authentication state
+- `chat.store.ts` - Chat state and WebSocket connection
+- `friends.store.ts` - Friends and requests state
 
-## Routing
-This project uses [TanStack Router](https://tanstack.com/router). The initial setup is a file based router. Which means that the routes are managed as files in `src/routes`.
+**Hooks (`src/hooks/`)**
+- `useChat.ts` - WebSocket connection lifecycle
+- `useAuth.ts` - Authentication helpers
 
-### Adding A Route
+**Components (`src/components/`)**
+- `Sidebar.tsx` - Conversation list
+- `ChatPanel.tsx` - Message display and input
+- `NewChatModal.tsx` - Create new conversations
+- `AuthenticatedLayout.tsx` - Layout wrapper with connection management
 
-To add a new route to your application just add another a new file in the `./src/routes` directory.
+### WebSocket Flow
 
-TanStack will automatically generate the content of the route file for you.
+1. **Connection**: Client connects via Verani client with JWT token
+2. **Authentication**: Actor extracts user info from JWT in `extractMeta`
+3. **Channel Subscription**: User automatically joins conversation channels
+4. **Message Flow**:
+   - Client sends message via `client.sendMessage()`
+   - Actor validates with Zod schema
+   - Message queued for async DB write
+   - Message broadcast immediately to all channel members
+   - Queue worker persists to D1 database
 
-Now that you have two routes you can use a `Link` component to navigate between them.
+### Queue Architecture
 
-### Adding Links
+Messages are persisted asynchronously via Cloudflare Queues:
 
-To use SPA (Single Page Application) navigation you will need to import the `Link` component from `@tanstack/react-router`.
+1. Actor receives message → validates → queues for save
+2. Queue worker processes batch → saves to D1
+3. Real-time delivery happens immediately (before DB write)
 
-```tsx
-import { Link } from "@tanstack/react-router";
-```
+This ensures low latency while maintaining data persistence.
 
-Then anywhere in your JSX you can use it like so:
+## Key Verani Patterns Demonstrated
 
-```tsx
-<Link to="/about">About</Link>
-```
+### 1. Room Definition with Lifecycle Hooks
 
-This will create a link that will navigate to the `/about` route.
-
-More information on the `Link` component can be found in the [Link documentation](https://tanstack.com/router/v1/docs/framework/react/api/router/linkComponent).
-
-### Using A Layout
-
-In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you use the `<Outlet />` component.
-
-Here is an example layout that includes a header:
-
-```tsx
-import { Outlet, createRootRoute } from '@tanstack/react-router'
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
-
-import { Link } from "@tanstack/react-router";
-
-export const Route = createRootRoute({
-  component: () => (
-    <>
-      <header>
-        <nav>
-          <Link to="/">Home</Link>
-          <Link to="/about">About</Link>
-        </nav>
-      </header>
-      <Outlet />
-      <TanStackRouterDevtools />
-    </>
-  ),
-})
-```
-
-The `<TanStackRouterDevtools />` component is not required so you can remove it if you don't want it in your layout.
-
-More information on layouts can be found in the [Layouts documentation](https://tanstack.com/router/latest/docs/framework/react/guide/routing-concepts#layouts).
-
-
-## Data Fetching
-
-There are multiple ways to fetch data in your application. You can use TanStack Query to fetch data from a server. But you can also use the `loader` functionality built into TanStack Router to load the data for a route before it's rendered.
-
-For example:
-
-```tsx
-const peopleRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/people",
-  loader: async () => {
-    const response = await fetch("https://swapi.dev/api/people");
-    return response.json() as Promise<{
-      results: {
-        name: string;
-      }[];
-    }>;
+```typescript
+export const chat = defineRoom({
+  name: "chat",
+  websocketPath: "/chat",
+  
+  async extractMeta(req) {
+    // Extract user from JWT token
+    const token = url.searchParams.get("token");
+    const payload = await verifyJWT(token);
+    return { userId: payload.sub, username: payload.username };
   },
-  component: () => {
-    const data = peopleRoute.useLoaderData();
-    return (
-      <ul>
-        {data.results.map((person) => (
-          <li key={person.name}>{person.name}</li>
-        ))}
-      </ul>
-    );
+  
+  onConnect(ctx) {
+    // User connected - join their conversation channels
   },
+  
+  onDisconnect(ctx) {
+    // User disconnected - cleanup
+  }
 });
 ```
 
-Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
+### 2. Event Handlers (Socket.io-like)
 
-### React-Query
-
-React-Query is an excellent addition or alternative to route loading and integrating it into you application is a breeze.
-
-First add your dependencies:
-
-```bash
-bun install @tanstack/react-query @tanstack/react-query-devtools
-```
-
-Next we'll need to create a query client and provider. We recommend putting those in `main.tsx`.
-
-```tsx
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-
-// ...
-
-const queryClient = new QueryClient();
-
-// ...
-
-if (!rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement);
-
-  root.render(
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
-  );
-}
-```
-
-You can also add TanStack Query Devtools to the root route (optional).
-
-```tsx
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
-
-const rootRoute = createRootRoute({
-  component: () => (
-    <>
-      <Outlet />
-      <ReactQueryDevtools buttonPosition="top-right" />
-      <TanStackRouterDevtools />
-    </>
-  ),
+```typescript
+chat.on("message.send", async (ctx, rawData) => {
+  // Validate with Zod
+  const parsed = parseRequest(MessageSendSchema, rawData);
+  
+  // Broadcast to conversation channel
+  ctx.actor.emit.to(`conversation:${conversationId}`).emit("chat.message", data);
 });
 ```
 
-Now you can use `useQuery` to fetch your data.
+### 3. Type-Safe Client
 
-```tsx
-import { useQuery } from "@tanstack/react-query";
+```typescript
+const client = new ChatClient(wsUrl, options);
 
-import "./App.css";
+// Type-safe emit
+client.sendMessage({ conversationId, text });
 
-function App() {
-  const { data } = useQuery({
-    queryKey: ["people"],
-    queryFn: () =>
-      fetch("https://swapi.dev/api/people")
-        .then((res) => res.json())
-        .then((data) => data.results as { name: string }[]),
-    initialData: [],
-  });
-
-  return (
-    <div>
-      <ul>
-        {data.map((person) => (
-          <li key={person.name}>{person.name}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-export default App;
-```
-
-You can find out everything you need to know on how to use React-Query in the [React-Query documentation](https://tanstack.com/query/latest/docs/framework/react/overview).
-
-## State Management
-
-Another common requirement for React applications is state management. There are many options for state management in React. TanStack Store provides a great starting point for your project.
-
-First you need to add TanStack Store as a dependency:
-
-```bash
-bun install @tanstack/store
-```
-
-Now let's create a simple counter in the `src/App.tsx` file as a demonstration.
-
-```tsx
-import { useStore } from "@tanstack/react-store";
-import { Store } from "@tanstack/store";
-import "./App.css";
-
-const countStore = new Store(0);
-
-function App() {
-  const count = useStore(countStore);
-  return (
-    <div>
-      <button onClick={() => countStore.setState((n) => n + 1)}>
-        Increment - {count}
-      </button>
-    </div>
-  );
-}
-
-export default App;
-```
-
-One of the many nice features of TanStack Store is the ability to derive state from other state. That derived state will update when the base state updates.
-
-Let's check this out by doubling the count using derived state.
-
-```tsx
-import { useStore } from "@tanstack/react-store";
-import { Store, Derived } from "@tanstack/store";
-import "./App.css";
-
-const countStore = new Store(0);
-
-const doubledStore = new Derived({
-  fn: () => countStore.state * 2,
-  deps: [countStore],
+// Type-safe listeners with Zod-validated data
+client.onMessage((data: ChatMessageResponse) => {
+  // data is fully typed and validated
 });
-doubledStore.mount();
-
-function App() {
-  const count = useStore(countStore);
-  const doubledCount = useStore(doubledStore);
-
-  return (
-    <div>
-      <button onClick={() => countStore.setState((n) => n + 1)}>
-        Increment - {count}
-      </button>
-      <div>Doubled - {doubledCount}</div>
-    </div>
-  );
-}
-
-export default App;
 ```
 
-We use the `Derived` class to create a new store that is derived from another store. The `Derived` class has a `mount` method that will start the derived store updating.
+## Project Structure
 
-Once we've created the derived store we can use it in the `App` component just like we would any other store using the `useStore` hook.
+```
+src/
+├── actors/          # Verani actor definitions
+├── components/      # React components
+├── hooks/           # React hooks for lifecycle management
+├── lib/             # Utilities (logger, auth, chat client)
+├── routes/          # TanStack Router routes
+├── schemas/         # Zod schemas (DB, WS, Queue)
+├── server/          # createServerFn API handlers
+├── service/         # Business logic layer
+└── store/           # Zustand state stores
+```
 
-You can find out everything you need to know on how to use TanStack Store in the [TanStack Store documentation](https://tanstack.com/store/latest).
+## Logging
 
-# Demo files
+The application includes comprehensive logging with sensitive data redaction:
 
-Files prefixed with `demo` can be safely deleted. They are there to provide a starting point for you to play around with the features you've installed.
+- All passwords, tokens, and secrets are automatically redacted
+- Scoped loggers for each service (`auth`, `conversations`, `friends`, etc.)
+- Log levels: `info`, `warn`, `error`, `debug`
 
-# Learn More
+See `src/lib/logger.ts` for the logger implementation.
 
-You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
+## Learn More
+
+- [Verani Documentation](https://github.com/v0id-user/verani/)
+- [Verani Examples](https://github.com/v0id-user/verani/tree/canary/examples)
+- [Cloudflare Durable Objects](https://developers.cloudflare.com/durable-objects/)
+- [TanStack Router](https://tanstack.com/router)
+- [Drizzle ORM](https://orm.drizzle.team/)
+
+## License
+
+ISC
