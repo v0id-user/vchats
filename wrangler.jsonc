@@ -36,22 +36,5 @@
 			"database_id": "0b572acb-fb3f-46d4-a112-c7cc03aaa85d",
 			"remote": true
 		}
-	],
-	"queues": {
-		"producers": [
-			{
-				"queue": "vchats-queue",
-				"binding": "vchats_queue"
-			},
-		],
-		"consumers": [
-			{
-				"queue": "vchats-queue",
-				"max_batch_size": 10,
-				"max_batch_timeout": 30,
-				"max_retries": 10,
-				"dead_letter_queue": "vchats-queue-dlq"
-			}
-		]
-	}
+	]
 }

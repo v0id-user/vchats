@@ -1,7 +1,7 @@
 import { defineRoom, createActorHandler } from "verani";
 import { verifyJWT } from "../lib/auth.jwt";
 import { isConversationMember, getUserConversations } from "../service/conversations";
-import { queueSaveMessage } from "../service/queue";
+import { saveMessage } from "../service/messages";
 import { createScopedLogger } from "../lib/logger";
 
 const log = createScopedLogger("actor:chat");
@@ -137,25 +137,25 @@ chat.on("message.send", async (ctx, rawData: unknown) => {
     return;
   }
 
-  // Queue message save for async write to D1
-  const result = await queueSaveMessage(conversationId, userId, text);
-  if (!result.success) {
-    log.error("message.send", "Failed to queue message", { userId, conversationId, error: result.error });
+  // Save message to D1 synchronously before broadcasting
+  const result = await saveMessage(conversationId, userId, text);
+  if (!result.success || !result.message) {
+    log.error("message.send", "Failed to save message", { userId, conversationId, error: result.error });
     emitError(ctx, result.error || "Failed to save message", "SAVE_ERROR");
     return;
   }
 
-  // Broadcast immediately - DB write happens async via queue
+  // Broadcast after successful DB write
   const messageEvent: ChatMessageResponse = {
-    id: result.messageId,
+    id: result.message.id,
     conversationId,
     from: userId,
     fromUsername: username,
     text,
-    timestamp: Date.now(),
+    timestamp: result.message.createdAt.getTime(),
   };
   ctx.actor.emit.to(`conversation:${conversationId}`).emit("chat.message", messageEvent);
-  log.info("message.send", "Message broadcasted", { messageId: result.messageId, conversationId, userId });
+  log.info("message.send", "Message saved and broadcasted", { messageId: result.message.id, conversationId, userId });
 });
 
 // Handle typing indicators - start
