@@ -1,7 +1,7 @@
 // Simple JWT implementation for Cloudflare Workers
 // Uses Web Crypto API
-
-const JWT_SECRET = "vchats-secret-key-change-in-production";
+import { env } from "cloudflare:workers";
+const JWT_SECRET = env.JWT_SECRET!;
 const JWT_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export interface JWTPayload {

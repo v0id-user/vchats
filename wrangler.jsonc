@@ -9,6 +9,7 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
+	"keep_vars": true,
 	"main": "src/index.ts",
 	"observability": {
 		"enabled": true
