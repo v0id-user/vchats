@@ -1,4 +1,4 @@
-import { defineContract, payload } from "verani/typed";
+import { defineContract, payload } from "verani/typed/shared";
 
 export const chatContract = defineContract({
   serverEvents: {
