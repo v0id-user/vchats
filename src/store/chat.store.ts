@@ -90,7 +90,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         enabled: true,
         maxAttempts: 10,
       },
-      pingInterval: 5000,
+      pingInterval: 60000,
     });
 
     // Connection lifecycle handlers (correct Verani API)
