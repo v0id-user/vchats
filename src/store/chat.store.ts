@@ -56,7 +56,7 @@ interface ChatState {
   typingUsers: TypingUser[];
 
   // Actions
-  connect: () => void;
+  connect: () => Promise<void>;
   disconnect: () => void;
   fetchConversations: () => Promise<void>;
   setActiveConversation: (conversation: Conversation | null) => void;
@@ -78,7 +78,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   typingUsers: [],
 
-  connect: () => {
+  connect: async () => {
     const { token, user } = useAuthStore.getState();
     if (!token || !user || get().client) return;
 
@@ -91,13 +91,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         maxAttempts: 10,
       },
       pingInterval: 60000,
+      connectionTimeout: 10000,
+      maxQueueSize: 100,
     });
 
     // Connection lifecycle handlers (correct Verani API)
-    client.onOpen(() => {
-      set({ connected: true });
-    });
-
     client.onClose(() => {
       set({ connected: false });
     });
@@ -175,8 +173,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       console.error("Chat error:", data.message, data.code);
     });
 
-    // Store client (auto-connects on construction)
+    // Store client
     set({ client });
+
+    // Wait for connection to be established before marking as connected
+    try {
+      await client.waitForConnection();
+      set({ connected: true });
+    } catch (error) {
+      console.error("Failed to establish WebSocket connection:", error);
+      // Client is stored but not connected - reconnection will be attempted automatically
+    }
   },
 
   disconnect: () => {

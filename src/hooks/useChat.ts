@@ -13,8 +13,11 @@ export function useChatConnection() {
   const { fetchFriends, fetchIncomingRequests, fetchOutgoingRequests } = useFriendsStore();
   const hasConnectedRef = useRef(false);
 
-  // Effect Event for initial data fetch - non-reactive, always reads latest
-  const onConnected = useEffectEvent(() => {
+  // Effect Event for initial connection and data fetch - non-reactive, always reads latest
+  // Now awaits connection before fetching data to ensure proper sequencing
+  const onConnect = useEffectEvent(async () => {
+    await connect();
+    // Fetch initial data after connection is established
     fetchConversations();
     fetchFriends();
     fetchIncomingRequests();
@@ -30,8 +33,7 @@ export function useChatConnection() {
     // Only connect if authenticated and no existing connection
     if (isAuthenticated && token && !client && !hasConnectedRef.current) {
       hasConnectedRef.current = true;
-      connect();
-      onConnected();
+      onConnect();
     }
 
     // Disconnect when logged out
@@ -39,7 +41,7 @@ export function useChatConnection() {
       onDisconnect();
       hasConnectedRef.current = false;
     }
-  }, [isAuthenticated, token, client, connect, onConnected, onDisconnect]);
+  }, [isAuthenticated, token, client, onConnect, onDisconnect]);
 
   // NOTE: No unmount cleanup here - logout handles disconnection via resetChat()
   // This prevents reconnect loops when navigating between authenticated routes

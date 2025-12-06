@@ -41,6 +41,8 @@ export interface ChatClientOptions {
   };
   pingInterval?: number;
   pongTimeout?: number;
+  maxQueueSize?: number;
+  connectionTimeout?: number;
 }
 
 /**
@@ -62,6 +64,8 @@ export class ChatClient {
       },
       pingInterval: options.pingInterval ?? 5000,
       pongTimeout: options.pongTimeout ?? 5000,
+      maxQueueSize: options.maxQueueSize ?? 100,
+      connectionTimeout: options.connectionTimeout ?? 10000,
     });
 
     // Set up internal event parsing
@@ -175,6 +179,45 @@ export class ChatClient {
 
   reconnect(): void {
     this.client.reconnect();
+  }
+
+  /**
+   * Returns a promise that resolves when connected.
+   * Useful for waiting until the connection is ready before sending messages.
+   */
+  waitForConnection(): Promise<void> {
+    return this.client.waitForConnection();
+  }
+
+  /**
+   * Returns detailed connection state information including
+   * reconnect attempts, connection ID, and connecting status.
+   */
+  getConnectionState() {
+    return this.client.getConnectionState();
+  }
+
+  /**
+   * Read-only property indicating whether the client is currently
+   * attempting to establish a connection.
+   */
+  get isConnecting(): boolean {
+    return this.client.getConnectionState().isConnecting;
+  }
+
+  /**
+   * Registers a one-time event listener on the underlying client.
+   * The handler will be automatically removed after being called once.
+   */
+  once(event: string, callback: (data: unknown) => void): void {
+    this.client.once(event, callback);
+  }
+
+  /**
+   * Removes an event handler from the internal handlers map.
+   */
+  off(event: string, callback: (data: any) => void): void {
+    this.handlers.get(event)?.delete(callback);
   }
 
   // ============================================
