@@ -190,7 +190,7 @@ chat.on("message.send", async (ctx, rawData) => {
 });
 ```
 
-### 3. Type-Safe Client
+### 3. Wrapping the Verani Client in a Type-Safe Client
 
 ```typescript
 const client = new ChatClient(wsUrl, options);
