@@ -1,58 +1,27 @@
-import { defineRoom, createActorHandler } from "verani";
+import { createTypedRoom, createActorHandler } from "verani/typed";
 import { verifyJWT } from "../lib/auth.jwt";
 import { isConversationMember, getUserConversations } from "../service/conversations";
 import { saveMessage } from "../service/messages";
 import { createScopedLogger } from "../lib/logger";
+import { chatContract } from "../contracts/chat.contract";
 
 const log = createScopedLogger("actor:chat");
 
-// Import Zod schemas for type-safe parsing
-import {
-  MessageSendSchema,
-  TypingStartSchema,
-  TypingStopSchema,
-  ConversationJoinSchema,
-  type MessageSendRequest,
-  type TypingStartRequest,
-  type TypingStopRequest,
-  type ConversationJoinRequest,
-} from "../schemas/ws/request";
-
-import type {
-  ChatMessageResponse,
-  TypingStartResponse,
-  TypingStopResponse,
-  UserJoinedResponse,
-  UserLeftResponse,
-  ConversationJoinedResponse,
-  ErrorResponse,
-} from "../schemas/ws/response";
-
-// Helper to safely parse and validate request data
-function parseRequest<T>(schema: { safeParse: (data: unknown) => { success: boolean; data?: T; error?: any } }, data: unknown): { success: true; data: T } | { success: false; error: string } {
-  const result = schema.safeParse(data);
-  if (!result.success) {
-    return { 
-      success: false, 
-      error: result.error?.issues?.[0]?.message || "Invalid request data" 
-    };
-  }
-  return { success: true, data: result.data! };
+// Define connection metadata type
+interface ChatMeta {
+  userId: string;
+  clientId: string;
+  channels: string[];
+  username: string;
 }
 
-// Helper to emit typed responses
-function emitError(ctx: any, message: string, code?: string): void {
-  const error: ErrorResponse = { message, code };
-  ctx.emit.emit("error", error);
-}
-
-// Define your room with lifecycle hooks
-export const chat = defineRoom({
+// Create typed room with contract
+const chat = createTypedRoom(chatContract, {
   name: "chat",
   websocketPath: "/chat",
 
   // Extract user info from JWT token in query params
-  async extractMeta(req) {
+  async extractMeta(req): Promise<ChatMeta> {
     const url = new URL(req.url);
     const token = url.searchParams.get("token");
 
@@ -81,7 +50,11 @@ export const chat = defineRoom({
     const conversations = await getUserConversations(payload.sub);
     const channels = ["default", ...conversations.map((c) => `conversation:${c.id}`)];
 
-    log.info("extractMeta", "User authenticated", { userId: payload.sub, username: payload.username, channelCount: channels.length });
+    log.info("extractMeta", "User authenticated", {
+      userId: payload.sub,
+      username: payload.username,
+      channelCount: channels.length,
+    });
 
     return {
       userId: payload.sub,
@@ -92,82 +65,86 @@ export const chat = defineRoom({
   },
 
   onConnect(ctx) {
-    log.info("onConnect", "User connected", { userId: ctx.meta.userId, username: ctx.meta.username, clientId: ctx.meta.clientId });
-
-    // Notify others that user joined
-    const joinedEvent: UserJoinedResponse = {
+    log.info("onConnect", "User connected", {
       userId: ctx.meta.userId,
       username: ctx.meta.username,
-    };
-    ctx.actor.emit.to("default").emit("user.joined", joinedEvent);
+      clientId: ctx.meta.clientId,
+    });
+
+    // Notify others that user joined
+    ctx.actor.emit.to("default").emit("user.joined", {
+      userId: ctx.meta.userId,
+      username: ctx.meta.username,
+    });
   },
 
   onDisconnect(ctx) {
-    log.info("onDisconnect", "User disconnected", { userId: ctx.meta.userId, username: ctx.meta.username, clientId: ctx.meta.clientId });
-
-    // Notify others that user left
-    const leftEvent: UserLeftResponse = {
+    log.info("onDisconnect", "User disconnected", {
       userId: ctx.meta.userId,
       username: ctx.meta.username,
-    };
-    ctx.actor.emit.to("default").emit("user.left", leftEvent);
+      clientId: ctx.meta.clientId,
+    });
+
+    // Notify others that user left
+    ctx.actor.emit.to("default").emit("user.left", {
+      userId: ctx.meta.userId,
+      username: ctx.meta.username,
+    });
   },
 });
 
-// Handle sending messages - uses queue for async DB write
-chat.on("message.send", async (ctx, rawData: unknown) => {
-  // Parse and validate request
-  const parsed = parseRequest<MessageSendRequest>(MessageSendSchema, rawData);
-  if (!parsed.success) {
-    log.warn("message.send", "Validation failed", { userId: ctx.meta.userId, error: parsed.error });
-    emitError(ctx, parsed.error, "VALIDATION_ERROR");
-    return;
-  }
-
-  const { conversationId, text } = parsed.data;
+// Handle sending messages - typed data comes directly from contract
+chat.handle("message.send", async (ctx, data) => {
+  const { conversationId, text } = data;
   const { userId, username } = ctx.meta;
 
-  log.info("message.send", "Message send request", { userId, username, conversationId, contentLength: text.length });
+  log.info("message.send", "Message send request", {
+    userId,
+    username,
+    conversationId,
+    contentLength: text.length,
+  });
 
   // Verify user is member of conversation
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) {
     log.warn("message.send", "User not a member", { userId, conversationId });
-    emitError(ctx, "Not a member of this conversation", "NOT_MEMBER");
+    ctx.emit("error", { message: "Not a member of this conversation", code: "NOT_MEMBER" });
     return;
   }
 
   // Save message to D1 synchronously before broadcasting
   const result = await saveMessage(conversationId, userId, text);
   if (!result.success || !result.message) {
-    log.error("message.send", "Failed to save message", { userId, conversationId, error: result.error });
-    emitError(ctx, result.error || "Failed to save message", "SAVE_ERROR");
+    log.error("message.send", "Failed to save message", {
+      userId,
+      conversationId,
+      error: result.error,
+    });
+    ctx.emit("error", { message: result.error || "Failed to save message", code: "SAVE_ERROR" });
     return;
   }
 
   // Broadcast after successful DB write
-  const messageEvent: ChatMessageResponse = {
+  ctx.actor.emit.to(`conversation:${conversationId}`).emit("chat.message", {
     id: result.message.id,
     conversationId,
     from: userId,
     fromUsername: username,
     text,
     timestamp: result.message.createdAt.getTime(),
-  };
-  ctx.actor.emit.to(`conversation:${conversationId}`).emit("chat.message", messageEvent);
-  log.info("message.send", "Message saved and broadcasted", { messageId: result.message.id, conversationId, userId });
+  });
+
+  log.info("message.send", "Message saved and broadcasted", {
+    messageId: result.message.id,
+    conversationId,
+    userId,
+  });
 });
 
 // Handle typing indicators - start
-chat.on("typing.start", async (ctx, rawData: unknown) => {
-  const parsed = parseRequest<TypingStartRequest>(TypingStartSchema, rawData);
-  if (!parsed.success) {
-    log.warn("typing.start", "Validation failed", { userId: ctx.meta.userId, error: parsed.error });
-    emitError(ctx, parsed.error, "VALIDATION_ERROR");
-    return;
-  }
-
-  const { conversationId } = parsed.data;
+chat.handle("typing.start", async (ctx, data) => {
+  const { conversationId } = data;
   const { userId, username } = ctx.meta;
 
   // Verify user is member
@@ -179,47 +156,32 @@ chat.on("typing.start", async (ctx, rawData: unknown) => {
 
   log.debug("typing.start", "Typing started", { userId, username, conversationId });
 
-  const typingEvent: TypingStartResponse = {
+  ctx.actor.emit.to(`conversation:${conversationId}`).emit("typing.start", {
     conversationId,
     userId,
     username,
-  };
-  ctx.actor.emit.to(`conversation:${conversationId}`).emit("typing.start", typingEvent);
+  });
 });
 
 // Handle typing indicators - stop
-chat.on("typing.stop", async (ctx, rawData: unknown) => {
-  const parsed = parseRequest<TypingStopRequest>(TypingStopSchema, rawData);
-  if (!parsed.success) {
-    emitError(ctx, parsed.error, "VALIDATION_ERROR");
-    return;
-  }
-
-  const { conversationId } = parsed.data;
+chat.handle("typing.stop", async (ctx, data) => {
+  const { conversationId } = data;
   const { userId, username } = ctx.meta;
 
   // Verify user is member
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) return;
 
-  const typingEvent: TypingStopResponse = {
+  ctx.actor.emit.to(`conversation:${conversationId}`).emit("typing.stop", {
     conversationId,
     userId,
     username,
-  };
-  ctx.actor.emit.to(`conversation:${conversationId}`).emit("typing.stop", typingEvent);
+  });
 });
 
 // Handle joining a conversation channel (when starting a new conversation)
-chat.on("conversation.join", async (ctx, rawData: unknown) => {
-  const parsed = parseRequest<ConversationJoinRequest>(ConversationJoinSchema, rawData);
-  if (!parsed.success) {
-    log.warn("conversation.join", "Validation failed", { userId: ctx.meta.userId, error: parsed.error });
-    emitError(ctx, parsed.error, "VALIDATION_ERROR");
-    return;
-  }
-
-  const { conversationId } = parsed.data;
+chat.handle("conversation.join", async (ctx, data) => {
+  const { conversationId } = data;
   const { userId } = ctx.meta;
 
   log.info("conversation.join", "Joining conversation", { userId, conversationId });
@@ -228,7 +190,7 @@ chat.on("conversation.join", async (ctx, rawData: unknown) => {
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) {
     log.warn("conversation.join", "User not a member", { userId, conversationId });
-    emitError(ctx, "Not a member of this conversation", "NOT_MEMBER");
+    ctx.emit("error", { message: "Not a member of this conversation", code: "NOT_MEMBER" });
     return;
   }
 
@@ -236,12 +198,15 @@ chat.on("conversation.join", async (ctx, rawData: unknown) => {
   const channel = `conversation:${conversationId}`;
   if (!ctx.meta.channels.includes(channel)) {
     ctx.meta.channels.push(channel);
-    log.info("conversation.join", "Channel added to subscriptions", { userId, conversationId, channel });
+    log.info("conversation.join", "Channel added to subscriptions", {
+      userId,
+      conversationId,
+      channel,
+    });
   }
 
-  const joinedEvent: ConversationJoinedResponse = { conversationId };
-  ctx.emit.emit("conversation.joined", joinedEvent);
+  ctx.emit("conversation.joined", { conversationId });
 });
 
 // Create the Durable Object class
-export const Chat = createActorHandler(chat);
+export const Chat = createActorHandler(chat.definition);

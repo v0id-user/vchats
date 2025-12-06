@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { useAuthStore } from "./auth.store";
-import { ChatClient, createChatClient } from "../lib/chat-client";
+import { createChatClient, type ChatClient } from "../lib/chat-client";
 import {
   getConversations as getConversationsFn,
   getMessages as getMessagesFn,
@@ -84,7 +84,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const wsUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/chat?token=${token}`;
 
-    // Create typed chat client with correct Verani API
+    // Create typed chat client - all events are type-safe via contract
     const client = createChatClient(wsUrl, {
       reconnection: {
         enabled: true,
@@ -95,7 +95,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       maxQueueSize: 100,
     });
 
-    // Connection lifecycle handlers (correct Verani API)
+    // Connection lifecycle handlers
     client.onClose(() => {
       set({ connected: false });
     });
@@ -104,7 +104,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ connected: state === "connected" });
     });
 
-    // Type-safe event handlers with Zod-validated data
+    // Type-safe event handlers - data is fully typed from contract
     client.on("chat.message", (data) => {
       const { activeConversation, conversations } = get();
 
@@ -139,7 +139,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     });
 
-    // Typing indicators with type-safe data
+    // Typing indicators
     client.on("typing.start", (data) => {
       const { typingUsers, activeConversation } = get();
       if (data.conversationId !== activeConversation?.id) return;
@@ -209,10 +209,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (conversation) {
       get().fetchMessages(conversation.id);
 
-      // Join conversation channel via typed method
+      // Join conversation channel via typed emit
       const { client } = get();
       if (client) {
-        client.joinConversation({ conversationId: conversation.id });
+        client.emit("conversation.join", { conversationId: conversation.id });
       }
     }
   },
@@ -232,8 +232,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     if (!client || !activeConversation || !connected) return;
 
-    // Type-safe emit
-    client.sendMessage({
+    // Type-safe emit via contract
+    client.emit("message.send", {
       conversationId: activeConversation.id,
       text: content,
     });
@@ -243,8 +243,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { client, activeConversation, connected } = get();
     if (!client || !activeConversation || !connected) return;
 
-    // Type-safe emit
-    client.startTyping({
+    // Type-safe emit via contract
+    client.emit("typing.start", {
       conversationId: activeConversation.id,
     });
   },
@@ -253,8 +253,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { client, activeConversation, connected } = get();
     if (!client || !activeConversation || !connected) return;
 
-    // Type-safe emit
-    client.stopTyping({
+    // Type-safe emit via contract
+    client.emit("typing.stop", {
       conversationId: activeConversation.id,
     });
   },
