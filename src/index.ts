@@ -1,6 +1,5 @@
 import handleRequest from "@tanstack/react-start/server-entry";
 import { UserConnection } from "./actors/connection";
-import { ChatRoom } from "./actors/chat-room";
 import { verifyJWT } from "./lib/auth.jwt";
 import { createScopedLogger } from "./lib/logger";
 
@@ -40,4 +39,4 @@ export default {
   },
 };
 
-export { UserConnection, ChatRoom };
+export { UserConnection };

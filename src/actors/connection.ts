@@ -3,7 +3,7 @@ import type { ConnectionMeta } from "verani/typed";
 import { verifyJWT } from "../lib/auth.jwt";
 import {
   isConversationMember,
-  getUserConversations,
+  getConversationMemberIds,
 } from "../service/conversations";
 import { saveMessage } from "../service/messages";
 import { createScopedLogger } from "../lib/logger";
@@ -15,85 +15,70 @@ interface ChatMeta extends ConnectionMeta {
   username: string;
 }
 
-const connection = createTypedConnection<
-  typeof chatContract,
-  ChatMeta
->(chatContract, {
-  name: "UserConnection",
-  websocketPath: "/chat",
+const connection = createTypedConnection<typeof chatContract, ChatMeta>(
+  chatContract,
+  {
+    name: "UserConnection",
+    websocketPath: "/chat",
 
-  async extractMeta(req): Promise<ChatMeta> {
-    const url = new URL(req.url);
-    const token = url.searchParams.get("token");
+    async extractMeta(req): Promise<ChatMeta> {
+      const url = new URL(req.url);
+      const token = url.searchParams.get("token");
 
-    if (!token) {
-      log.warn("extractMeta", "No token provided, anonymous connection");
+      if (!token) {
+        log.warn("extractMeta", "No token provided, anonymous connection");
+        return {
+          userId: "anonymous",
+          clientId: crypto.randomUUID(),
+          channels: ["default"],
+          username: "Anonymous",
+        };
+      }
+
+      const payload = await verifyJWT(token);
+      if (!payload) {
+        log.warn("extractMeta", "Invalid token");
+        return {
+          userId: "anonymous",
+          clientId: crypto.randomUUID(),
+          channels: ["default"],
+          username: "Anonymous",
+        };
+      }
+
+      log.info("extractMeta", "User authenticated", {
+        userId: payload.sub,
+        username: payload.username,
+      });
+
       return {
-        userId: "anonymous",
+        userId: payload.sub,
         clientId: crypto.randomUUID(),
         channels: ["default"],
-        username: "Anonymous",
+        username: payload.username,
       };
-    }
+    },
 
-    const payload = await verifyJWT(token);
-    if (!payload) {
-      log.warn("extractMeta", "Invalid token");
-      return {
-        userId: "anonymous",
-        clientId: crypto.randomUUID(),
-        channels: ["default"],
-        username: "Anonymous",
-      };
-    }
+    onConnect(ctx) {
+      log.info("onConnect", "User connected", {
+        userId: ctx.meta.userId,
+        username: ctx.meta.username,
+        clientId: ctx.meta.clientId,
+      });
+    },
 
-    log.info("extractMeta", "User authenticated", {
-      userId: payload.sub,
-      username: payload.username,
-    });
+    onDisconnect(ctx) {
+      log.info("onDisconnect", "User disconnected", {
+        userId: ctx.meta.userId,
+        username: ctx.meta.username,
+        clientId: ctx.meta.clientId,
+      });
+    },
+  }
+);
 
-    return {
-      userId: payload.sub,
-      clientId: crypto.randomUUID(),
-      channels: ["default"],
-      username: payload.username,
-    };
-  },
-
-  async onConnect(ctx) {
-    log.info("onConnect", "User connected", {
-      userId: ctx.meta.userId,
-      username: ctx.meta.username,
-      clientId: ctx.meta.clientId,
-    });
-
-    // Join room for each conversation the user belongs to
-    const conversations = await getUserConversations(ctx.meta.userId);
-    for (const conv of conversations) {
-      await ctx.actor.joinRoom(`conversation:${conv.id}`);
-    }
-
-    log.info("onConnect", "Joined conversation rooms", {
-      userId: ctx.meta.userId,
-      roomCount: conversations.length,
-    });
-  },
-
-  onDisconnect(ctx) {
-    log.info("onDisconnect", "User disconnected", {
-      userId: ctx.meta.userId,
-      username: ctx.meta.username,
-      clientId: ctx.meta.clientId,
-    });
-    // Rooms are automatically left on disconnect
-  },
-});
-
-// Add room/connection bindings to the underlying definition
-// (TypedConnectionConfig doesn't expose these, but ConnectionDefinition supports them)
-const def = connection.definition as any;
-def.rooms = { conversation: "ChatRoom" };
-def.connectionBinding = "UserConnection";
+// Set connectionBinding for toUser() RPC delivery
+(connection.definition as any).connectionBinding = "UserConnection";
 
 // Handle sending messages
 connection.on("message.send", async (ctx, data) => {
@@ -131,20 +116,28 @@ connection.on("message.send", async (ctx, data) => {
     return;
   }
 
-  // Broadcast via RoomDO
-  await ctx.emit.toRoom(`conversation:${conversationId}`).emit("chat.message", {
+  const messageData = {
     id: result.message.id,
     conversationId,
     from: userId,
     fromUsername: username,
     text,
     timestamp: result.message.createdAt.getTime(),
-  });
+  };
 
-  log.info("message.send", "Message saved and broadcasted", {
+  // Deliver to ALL conversation members (including sender) via direct RPC
+  const memberIds = await getConversationMemberIds(conversationId);
+  await Promise.all(
+    memberIds.map((memberId) =>
+      ctx.emit.toUser(memberId).emit("chat.message", messageData)
+    )
+  );
+
+  log.info("message.send", "Message saved and delivered", {
     messageId: result.message.id,
     conversationId,
     userId,
+    recipientCount: memberIds.length,
   });
 });
 
@@ -156,11 +149,16 @@ connection.on("typing.start", async (ctx, data) => {
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) return;
 
-  await ctx.emit.toRoom(`conversation:${conversationId}`).emit("typing.start", {
-    conversationId,
-    userId,
-    username,
-  });
+  const memberIds = await getConversationMemberIds(conversationId);
+  const otherMembers = memberIds.filter((id) => id !== userId);
+
+  await Promise.all(
+    otherMembers.map((memberId) =>
+      ctx.emit
+        .toUser(memberId)
+        .emit("typing.start", { conversationId, userId, username })
+    )
+  );
 });
 
 connection.on("typing.stop", async (ctx, data) => {
@@ -170,14 +168,19 @@ connection.on("typing.stop", async (ctx, data) => {
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) return;
 
-  await ctx.emit.toRoom(`conversation:${conversationId}`).emit("typing.stop", {
-    conversationId,
-    userId,
-    username,
-  });
+  const memberIds = await getConversationMemberIds(conversationId);
+  const otherMembers = memberIds.filter((id) => id !== userId);
+
+  await Promise.all(
+    otherMembers.map((memberId) =>
+      ctx.emit
+        .toUser(memberId)
+        .emit("typing.stop", { conversationId, userId, username })
+    )
+  );
 });
 
-// Handle joining a conversation channel
+// Handle joining a conversation channel (no-op for room joining, just ack)
 connection.on("conversation.join", async (ctx, data) => {
   const { conversationId } = data;
   const { userId } = ctx.meta;
@@ -200,10 +203,6 @@ connection.on("conversation.join", async (ctx, data) => {
     return;
   }
 
-  // Join the room via RoomDO
-  await ctx.actor.joinRoom(`conversation:${conversationId}`);
-
-  log.info("conversation.join", "Room joined", { userId, conversationId });
   ctx.emit("conversation.joined", { conversationId });
 });
 

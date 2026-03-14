@@ -223,6 +223,17 @@ export async function getUserConversations(userId: string): Promise<Conversation
   return convos;
 }
 
+// Get all member userIds for a conversation (lightweight, no joins)
+export async function getConversationMemberIds(convoId: string): Promise<string[]> {
+  const members = await db
+    .select({ userId: conversationMembers.userId })
+    .from(conversationMembers)
+    .where(eq(conversationMembers.conversationId, convoId))
+    .all();
+
+  return members.map((m) => m.userId);
+}
+
 // Check if user is member of conversation
 export async function isConversationMember(convoId: string, userId: string): Promise<boolean> {
   const member = await db

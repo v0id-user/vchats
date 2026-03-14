@@ -19,10 +19,6 @@
 			{
 				"class_name": "UserConnection",
 				"name": "UserConnection"
-			},
-			{
-				"class_name": "ChatRoom",
-				"name": "ChatRoom"
 			}
 		]
 	},
@@ -35,8 +31,7 @@
 		},
 		{
 			"new_sqlite_classes": [
-				"UserConnection",
-				"ChatRoom"
+				"UserConnection"
 			],
 			"deleted_classes": [
 				"Chat"
