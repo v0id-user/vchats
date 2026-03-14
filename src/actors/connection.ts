@@ -1,26 +1,27 @@
-import { createTypedRoom, createActorHandler } from "verani/typed";
+import { createTypedConnection, createConnectionHandler } from "verani/typed";
+import type { ConnectionMeta } from "verani/typed";
 import { verifyJWT } from "../lib/auth.jwt";
-import { isConversationMember, getUserConversations } from "../service/conversations";
+import {
+  isConversationMember,
+  getUserConversations,
+} from "../service/conversations";
 import { saveMessage } from "../service/messages";
 import { createScopedLogger } from "../lib/logger";
 import { chatContract } from "../contracts/chat.contract";
 
-const log = createScopedLogger("actor:chat");
+const log = createScopedLogger("actor:connection");
 
-// Define connection metadata type
-interface ChatMeta {
-  userId: string;
-  clientId: string;
-  channels: string[];
+interface ChatMeta extends ConnectionMeta {
   username: string;
 }
 
-// Create typed room with contract
-const chat = createTypedRoom(chatContract, {
-  name: "chat",
+const connection = createTypedConnection<
+  typeof chatContract,
+  ChatMeta
+>(chatContract, {
+  name: "UserConnection",
   websocketPath: "/chat",
 
-  // Extract user info from JWT token in query params
   async extractMeta(req): Promise<ChatMeta> {
     const url = new URL(req.url);
     const token = url.searchParams.get("token");
@@ -46,35 +47,35 @@ const chat = createTypedRoom(chatContract, {
       };
     }
 
-    // Get user's conversations to subscribe to their channels
-    const conversations = await getUserConversations(payload.sub);
-    const channels = ["default", ...conversations.map((c) => `conversation:${c.id}`)];
-
     log.info("extractMeta", "User authenticated", {
       userId: payload.sub,
       username: payload.username,
-      channelCount: channels.length,
     });
 
     return {
       userId: payload.sub,
       clientId: crypto.randomUUID(),
-      channels,
+      channels: ["default"],
       username: payload.username,
     };
   },
 
-  onConnect(ctx) {
+  async onConnect(ctx) {
     log.info("onConnect", "User connected", {
       userId: ctx.meta.userId,
       username: ctx.meta.username,
       clientId: ctx.meta.clientId,
     });
 
-    // Notify others that user joined
-    ctx.actor.emit.to("default").emit("user.joined", {
+    // Join room for each conversation the user belongs to
+    const conversations = await getUserConversations(ctx.meta.userId);
+    for (const conv of conversations) {
+      await ctx.actor.joinRoom(`conversation:${conv.id}`);
+    }
+
+    log.info("onConnect", "Joined conversation rooms", {
       userId: ctx.meta.userId,
-      username: ctx.meta.username,
+      roomCount: conversations.length,
     });
   },
 
@@ -84,17 +85,18 @@ const chat = createTypedRoom(chatContract, {
       username: ctx.meta.username,
       clientId: ctx.meta.clientId,
     });
-
-    // Notify others that user left
-    ctx.actor.emit.to("default").emit("user.left", {
-      userId: ctx.meta.userId,
-      username: ctx.meta.username,
-    });
+    // Rooms are automatically left on disconnect
   },
 });
 
-// Handle sending messages - typed data comes directly from contract
-chat.on("message.send", async (ctx, data) => {
+// Add room/connection bindings to the underlying definition
+// (TypedConnectionConfig doesn't expose these, but ConnectionDefinition supports them)
+const def = connection.definition as any;
+def.rooms = { conversation: "ChatRoom" };
+def.connectionBinding = "UserConnection";
+
+// Handle sending messages
+connection.on("message.send", async (ctx, data) => {
   const { conversationId, text } = data;
   const { userId, username } = ctx.meta;
 
@@ -105,15 +107,16 @@ chat.on("message.send", async (ctx, data) => {
     contentLength: text.length,
   });
 
-  // Verify user is member of conversation
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) {
     log.warn("message.send", "User not a member", { userId, conversationId });
-    ctx.emit("error", { message: "Not a member of this conversation", code: "NOT_MEMBER" });
+    ctx.emit("error", {
+      message: "Not a member of this conversation",
+      code: "NOT_MEMBER",
+    });
     return;
   }
 
-  // Save message to D1 synchronously before broadcasting
   const result = await saveMessage(conversationId, userId, text);
   if (!result.success || !result.message) {
     log.error("message.send", "Failed to save message", {
@@ -121,12 +124,15 @@ chat.on("message.send", async (ctx, data) => {
       conversationId,
       error: result.error,
     });
-    ctx.emit("error", { message: result.error || "Failed to save message", code: "SAVE_ERROR" });
+    ctx.emit("error", {
+      message: result.error || "Failed to save message",
+      code: "SAVE_ERROR",
+    });
     return;
   }
 
-  // Broadcast after successful DB write
-  ctx.actor.emit.to(`conversation:${conversationId}`).emit("chat.message", {
+  // Broadcast via RoomDO
+  await ctx.emit.toRoom(`conversation:${conversationId}`).emit("chat.message", {
     id: result.message.id,
     conversationId,
     from: userId,
@@ -142,71 +148,63 @@ chat.on("message.send", async (ctx, data) => {
   });
 });
 
-// Handle typing indicators - start
-chat.on("typing.start", async (ctx, data) => {
+// Handle typing indicators
+connection.on("typing.start", async (ctx, data) => {
   const { conversationId } = data;
   const { userId, username } = ctx.meta;
 
-  // Verify user is member
-  const isMember = await isConversationMember(conversationId, userId);
-  if (!isMember) {
-    log.debug("typing.start", "User not a member", { userId, conversationId });
-    return;
-  }
-
-  log.debug("typing.start", "Typing started", { userId, username, conversationId });
-
-  ctx.actor.emit.to(`conversation:${conversationId}`).emit("typing.start", {
-    conversationId,
-    userId,
-    username,
-  });
-});
-
-// Handle typing indicators - stop
-chat.on("typing.stop", async (ctx, data) => {
-  const { conversationId } = data;
-  const { userId, username } = ctx.meta;
-
-  // Verify user is member
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) return;
 
-  ctx.actor.emit.to(`conversation:${conversationId}`).emit("typing.stop", {
+  await ctx.emit.toRoom(`conversation:${conversationId}`).emit("typing.start", {
     conversationId,
     userId,
     username,
   });
 });
 
-// Handle joining a conversation channel (when starting a new conversation)
-chat.on("conversation.join", async (ctx, data) => {
+connection.on("typing.stop", async (ctx, data) => {
+  const { conversationId } = data;
+  const { userId, username } = ctx.meta;
+
+  const isMember = await isConversationMember(conversationId, userId);
+  if (!isMember) return;
+
+  await ctx.emit.toRoom(`conversation:${conversationId}`).emit("typing.stop", {
+    conversationId,
+    userId,
+    username,
+  });
+});
+
+// Handle joining a conversation channel
+connection.on("conversation.join", async (ctx, data) => {
   const { conversationId } = data;
   const { userId } = ctx.meta;
 
-  log.info("conversation.join", "Joining conversation", { userId, conversationId });
+  log.info("conversation.join", "Joining conversation", {
+    userId,
+    conversationId,
+  });
 
-  // Verify user is member
   const isMember = await isConversationMember(conversationId, userId);
   if (!isMember) {
-    log.warn("conversation.join", "User not a member", { userId, conversationId });
-    ctx.emit("error", { message: "Not a member of this conversation", code: "NOT_MEMBER" });
+    log.warn("conversation.join", "User not a member", {
+      userId,
+      conversationId,
+    });
+    ctx.emit("error", {
+      message: "Not a member of this conversation",
+      code: "NOT_MEMBER",
+    });
     return;
   }
 
-  // Add channel to user's subscriptions
-  const channel = `conversation:${conversationId}`;
-  if (!ctx.meta.channels.includes(channel)) {
-    ctx.meta.channels.push(channel);
-    log.info("conversation.join", "Channel added to subscriptions", {
-      userId,
-      conversationId,
-      channel,
-    });
-  }
+  // Join the room via RoomDO
+  await ctx.actor.joinRoom(`conversation:${conversationId}`);
 
+  log.info("conversation.join", "Room joined", { userId, conversationId });
   ctx.emit("conversation.joined", { conversationId });
 });
 
-// Create the Durable Object class
-export const Chat = createActorHandler(chat.definition);
+export const UserConnection = createConnectionHandler(connection.definition);

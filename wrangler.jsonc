@@ -17,8 +17,12 @@
 	"durable_objects": {
 		"bindings": [
 			{
-				"class_name": "Chat",
-				"name": "Chat"
+				"class_name": "UserConnection",
+				"name": "UserConnection"
+			},
+			{
+				"class_name": "ChatRoom",
+				"name": "ChatRoom"
 			}
 		]
 	},
@@ -28,6 +32,16 @@
 				"Chat"
 			],
 			"tag": "v1"
+		},
+		{
+			"new_sqlite_classes": [
+				"UserConnection",
+				"ChatRoom"
+			],
+			"deleted_classes": [
+				"Chat"
+			],
+			"tag": "v2"
 		}
 	],
 	"d1_databases": [
