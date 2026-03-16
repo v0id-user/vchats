@@ -1,5 +1,5 @@
 # vchats - Verani Showcase
-
+# Does not work anymore, old patterens
 A real-time chat application showcasing [Verani](https://github.com/v0id-user/verani/) - a simple, focused realtime SDK for Cloudflare Actors with Socket.io-like semantics.
 
 ## About Verani
