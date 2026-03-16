@@ -20,6 +20,7 @@ const connection = createTypedConnection<typeof chatContract, ChatMeta>(
   {
     name: "UserConnection",
     websocketPath: "/chat",
+    connectionBinding: "UserConnection",
 
     async extractMeta(req): Promise<ChatMeta> {
       const url = new URL(req.url);
@@ -76,9 +77,6 @@ const connection = createTypedConnection<typeof chatContract, ChatMeta>(
     },
   }
 );
-
-// Set connectionBinding for toUser() RPC delivery
-(connection.definition as any).connectionBinding = "UserConnection";
 
 // Handle sending messages
 connection.on("message.send", async (ctx, data) => {
